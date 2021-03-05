@@ -1,0 +1,118 @@
+MODULE Coming;
+
+REQUIRE RetailSettings, PurchaseOrder, ItemBy;
+
+NAMESPACE Retail;
+
+CLASS Coming 'Приход в розницу' : Order;
+@defineDocStatus(coming, 'прихода в розницу');
+
+@defineNumberType(coming);
+
+@defineID(coming, 'Приход в розницу', '', 6);
+
+// Lines
+CLASS ComingLine 'Строка заказа' : OrderLine;
+
+markup 'Наценка, %' = DATA NUMERIC[10,2] (ComingLine);
+retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
+
+sumTaxes 'Сумма налога' = DATA NUMERIC[10,2] (ComingLine);
+
+retailPriceSum 'Розничная сумма' = DATA NUMERIC[10,2] (ComingLine);
+
+markupSum 'Сумма наценки' = DATA NUMERIC[10,2] (ComingLine);
+
+WHEN LOCAL FORMS order SETCHANGED(item(ComingLine cl)) DO markup(cl) <- markup(item(cl));
+
+WHEN LOCAL (CHANGED(untaxedAmount(ComingLine cl)) OR CHANGED(markup(cl))) 
+    AND NOT CHANGED(markupSum(cl)) DO markupSum(d) <- NUMERIC[10,2](markup(cl) * untaxedAmount(cl));
+
+WHEN LOCAL (CHANGED(untaxedAmount(ComingLine cl)) OR CHANGED(taxes(cl))) 
+    AND NOT CHANGED(sumTaxes(cl)) DO sumTaxes(d) <- NUMERIC[10,2](taxes(cl) * untaxedAmount(cl));
+
+WHEN LOCAL (CHANGED(untaxedAmount(ComingLine cl)) OR CHANGED(taxes(cl))) 
+    AND NOT CHANGED(sumTaxes(cl)) DO sumTaxes(d) <- NUMERIC[10,2](taxes(cl) * untaxedAmount(cl));
+
+FORM coming 'Приход в розницу'
+    OBJECTS c = Coming PANEL
+    PROPERTIES(c) nameType, dateTime, number, 
+                  nameVendor, nameCompany, nameLocation, nameCurrency
+    PROPERTIES(c) READONLY untaxedAmount, taxAmount, amount
+                 
+    OBJECTS lineObject = ComingLine
+    PROPERTIES(lineObject) index, nameItem, description, nameUom, idBarCodeItem, idItem, 
+        quantity, price, untaxedAmount, taxes ON CHANGE changeTax(lineObject), sumTaxes, 
+        markup, markupSum, retailPrice, retailPriceSum
+    PROPERTIES(lineObject) NEW, DELETE
+    FILTERS order(lineObject) = c
+     
+    EDIT Coming OBJECT c    
+; 
+
+DESIGN coming {
+    caption = (CONCAT ' ', 'Приход в розницу', '№' + number(c), 'от ' + dateTime(c));
+    OBJECTS {
+        NEW header {
+            alignment = STRETCH;    
+            type = CONTAINERH;
+            NEW headerLeft {
+                MOVE PROPERTY(nameType(c)) { notNull = TRUE; }
+                MOVE PROPERTY(dateTime(c));
+                MOVE PROPERTY(number(c));
+            }
+            NEW headerRight {
+                MOVE PROPERTY(nameVendor(c)) { notNull = TRUE; } 
+                MOVE PROPERTY(nameCompany(c)) { notNull = TRUE; }
+                MOVE PROPERTY(nameLocation(c)) { notNull = TRUE; }
+                MOVE PROPERTY(nameCurrency(c));
+            }
+            NEW relatedDoc {
+                fill = 1;
+                type = TABBED;
+            }                                            
+        }
+        NEW details {
+            fill = 7;
+            type = TABBED;
+            NEW lines {
+                caption = 'Строки';
+                MOVE BOX(lineObject);
+            }     
+        }
+        NEW footer {
+            align = END;
+            type = CONTAINERH; 
+            NEW total {
+                caption = 'Итого';
+                type = CONTAINERH;
+                MOVE PROPERTY(untaxedAmount(c));
+                MOVE PROPERTY(taxAmount(c));
+                MOVE PROPERTY(amount(c));                     
+            }
+        }
+    }        
+}
+
+
+FORM comings 'Приходы в розницу'
+    OBJECTS c = Coming BACKGROUND background(c)
+    PROPERTIES(c) READONLYIF isReadonly()
+                           nameType, dateTime, number, nameVendor,
+                           namePaymentTerms,
+                           scheduledDateTime, nameLocation,
+                           nameRepresentative, vendorReference,
+                           untaxedAmount, taxAmount, amount     
+    PROPERTIES(c) NEWSESSION NEW, EDIT, DELETE 
+;
+@extendFormEditable(comings);
+@defineDocObjectsForm(comings, c, 'Приходы в розницу');
+@defineDocStatusForm(coming, c);
+@defineDocLinesCount(coming, c);
+@defineDocLocationAccess(coming, c);
+
+NAVIGATOR {
+    operations {
+        NEW comings FIRST;
+    }
+}

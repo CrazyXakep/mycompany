@@ -1,0 +1,11 @@
+MODULE ComingFilter;
+
+REQUIRE Coming;
+
+NAMESPACE Retail;
+
+@defineDateFilterForm(comings, c);
+
+// right pane
+@defineDocFilter(coming, Location, location, c, 'Место хранения');
+@defineDocFilter(coming, Partner, vendor, c, 'Поставщик');

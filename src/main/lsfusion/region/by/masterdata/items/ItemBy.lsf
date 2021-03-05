@@ -1,0 +1,29 @@
+MODULE ItemBy;
+
+REQUIRE Item;
+
+NAMESPACE MasterData;
+
+markup 'Наценка, %' = DATA NUMERIC[10,2] (Item);
+
+copy (Item n, Item o) + {
+    markup(n)   <- markup(o);
+}
+
+EXTEND FORM item
+    PROPERTIES(i) markup READONLYIF readonly(i)
+;
+
+DESIGN item {
+    OBJECTS{
+        header{
+            row1{
+                MOVE PROPERTY (markup(i));
+            }
+        }
+    }
+}
+
+EXTEND FORM items
+    PROPERTIES(i) markup
+;
