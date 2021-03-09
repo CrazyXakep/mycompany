@@ -11,7 +11,22 @@ NAMESPACE Purchase;
 
 CLASS Order 'Заказ поставщику';
 
-@defineDocStatus(order, 'заказа поставщику');
+@defineDocStatus(order, 'заказа поставщику'){
+    CLASS OrderStatus 'Статус заказа поставщику' {
+        draft 'Черновик'
+    }
+    
+    name 'Имя' (OrderStatus s) = staticCaption(s) IF s IS OrderStatus CHARWIDTH 12;
+    
+    status 'Статус' = ABSTRACT CASE OrderStatus (Order) MATERIALIZED INDEXED;
+    nameStatus 'Статус' (Order d) = name(status(d));
+    colorStatus 'Цвет' = ABSTRACT CASE COLOR (Order);
+    
+    status(Order d) += WHEN d IS Order THEN OrderStatus.draft;
+    colorStatus(Order d) += WHEN status(d) = OrderStatus.draft THEN RGB(187,242,210);
+    
+    readonly = ABSTRACT CASE BOOLEAN (Order);
+};
 
 // type
 type 'Тип' = DATA OrderType (Order) NONULL;
@@ -21,9 +36,32 @@ WHEN LOCAL SET(Order o IS Order) AND NOT CHANGED(type(o)) DO type(o) <- defaultO
 
 dateTime 'Дата'  = DATA DATETIME (Order);
 WHEN LOCAL SET(Order o IS Order) AND NOT CHANGED(dateTime(o)) DO { dateTime(o) <- currentDateTime();}
-@defineDateTimeAggregation(Order);
+@defineDateTimeAggregation(Order){
+    @defineDateTimeAggregation(Order, , ){
+    date 'Дата' (Order o) = DATE(dateTime(o));
+    
+    @defineDateAggregation(Order, , ){
+    nameDOW 'День недели' (Order o) = extractDOWName(date(o));
+    week 'Неделя' (Order o) = extractWeek(date(o));
+    
+    numberMonth '№ месяца' (Order o) = extractMonthNumber(date(o));
+    nameMonth 'Месяц' (Order o) = extractMonthName(date(o));
+    year 'Год' (Order o) = extractYear(date(o));
+};
 
-@defineNumberType(order);
+    minute 'Минута' (Order o) = extractMinute(dateTime(o));
+    hour 'Час' (Order o) = extractHour(dateTime(o));
+};
+};
+
+@defineNumberType(order){
+    number 'Номер' = DATA STRING[31] (Order) NONULL CHARWIDTH 10;
+
+    WHEN SETCHANGED(type(Order o)) AND numerator(type(o)) AND NOT number(o) DO {
+        number(o) <- CONCAT '/', series(numerator(type(o))), curStringValue(numerator(type(o)));
+        incrementValueSession(numerator(type(o)));
+    }
+};
 
 numberDate 'Описание' (Order o) = number(o) + ' от ' + dateTime(o) IN id;
 
@@ -101,7 +139,54 @@ WHEN LOCAL SETCHANGED(item(OrderLine l)) AND NOT CHANGED(price(l)) DO price(l) <
 
 defaultPrice (OrderLine l) += WHEN cost(item(l), DATE(dateTime(order(l)))) THEN cost(item(l)); 
 
-@defineTaxCalc(order, o, purchase);
+@defineTaxCalc(order, o, purchase){
+    @defineTaxCalc(order, o, purchase, price){
+    untaxedAmount '{Amount}'  = DATA NUMERIC[14,2] (OrderLine);
+    
+    WHEN LOCAL CHANGED(quantity(OrderLine l)) OR CHANGED(price(l)) DO {
+        untaxedAmount(l) <- NUMERIC[14,2](quantity(l) * price(l));
+    }
+    
+    // taxes for line
+    in 'Вкл' = DATA BOOLEAN (OrderLine, Tax);
+    WHEN LOCAL CHANGED(item(OrderLine l)) DO
+        in(l, Tax t) <- purchaseIn(item(l), t);
+
+    changeTax (OrderLine l) {
+        REQUEST {
+            setTax (Tax t) <- in(l, t);
+            DIALOG changeTax; 
+        } DO in(l, Tax t) <- setTax(t);
+    } 
+     
+    // amount    
+    taxAmount 'Налоги' (Tax t, OrderLine l) = DATA NUMERIC[14,2] (Tax, OrderLine);
+    
+    taxIncluded = ABSTRACT BOOLEAN (OrderLine);
+    WHEN LOCAL CHANGED(untaxedAmount(OrderLine l) IF in(l, Tax t)) DO
+        taxAmount (t, l) <- NUMERIC[14,2] (value(t) / (100 (+) (value(t) IF taxIncluded(l))) * untaxedAmount(l));
+    
+    CONSTRAINT (DROPPED(Tax t IS Tax) AND PREV(taxAmount(t, OrderLine l))) 
+                                                            MESSAGE 'Нельзя удалять налог, участвующий в расчетах';
+    
+    taxAmount 'Налоги' (OrderLine l) = GROUP SUM taxAmount(Tax t, l) IF in(l, t);
+    taxPercent 'Налоги, %' (OrderLine l) = GROUP SUM value(Tax t) IF in(l, t);
+    taxes 'Налоги' (OrderLine l) = GROUP CONCAT name(Tax t) IF in(l, t), ', ' ORDER t CHARWIDTH 8;
+
+    amount 'Итоговая сумма' (OrderLine l) = untaxedAmount(l) (+) (taxAmount(l) IF NOT taxIncluded(l));
+    
+    // taxes for document
+    taxCount (Order o, Tax t) = GROUP SUM 1 IF in(OrderLine l, t) AND order(l) = o;
+    taxAmount 'Налог' (Tax t, Order o) = 
+        GROUP SUM taxAmount(t, OrderLine l) IF order(l) = o AND in(l, t);
+    
+    untaxedAmount '{Amount}' (Order o) = GROUP SUM untaxedAmount(OrderLine l) IF order(l) = o;
+
+    taxAmount 'Налог' (Order o) = GROUP SUM taxAmount(Tax t, o);
+
+    amount 'Итоговая сумма' (Order o) = GROUP SUM amount(OrderLine l) IF order(l) = o;
+};
+};
 taxIncluded (OrderLine l) += taxIncluded(type(order(l)));
 
 WHEN LOCAL CHANGED (item(OrderLine ol)) DO {
@@ -206,7 +291,104 @@ DESIGN order {
     }        
 }
 
-@defineDocHistory(order, o, item, quantity);
+@defineDocHistory(order, o, item, quantity){
+
+    @defineDocHistoryHead(order, o){
+    CLASS OrderHistory 'История изменений';
+    
+    order = DATA Order (OrderHistory);
+
+    dateTime 'Дата' = DATA DATETIME (OrderHistory);
+    
+    user = DATA User (OrderHistory);
+    nameUser 'Пользователь' (OrderHistory l) = name(user(l));
+    
+    computer = DATA Computer (OrderHistory);
+    hostnameComputer 'Компьютер' (OrderHistory l) = hostname(computer(l)) CHARWIDTH 10;
+    
+    type 'Тип' = DATA ISTRING[100] (OrderHistory) CHARWIDTH 15;
+    description 'Описание' = DATA TEXT (OrderHistory);
+     
+    WHEN SETCHANGED(status(Order o)) AND NOT disableHistory() DO {     
+        NEW l = OrderHistory {
+            order(l) <- o;
+            dateTime(l) <- currentDateTime();
+            user(l) <- currentUser();
+            computer(l) <- currentComputer();
+            type(l) <- 'Изменен статус';
+            description (l) <- 'Изменен статус на ' + staticCaption(status(o));
+        }
+    }
+
+    EXTEND FORM order
+        OBJECTS orderl = OrderHistory
+        PROPERTIES(orderl) READONLY dateTime, nameUser, hostnameComputer, type, description, pdescription = description PANEL
+        FILTERS order(orderl) = o
+    ;
+    
+    DESIGN order {
+        details {
+            NEW history {
+                caption = 'История';
+                fill = 1;
+                type = SPLITH;
+                MOVE BOX(orderl) { 
+                    fill = 2;
+                    PROPERTY(description(orderl)) { valueHeight = 18; }
+                }
+                MOVE PROPERTY(pdescription) { panelCaptionVertical = TRUE; fill = 1; }
+            }
+        }
+    }
+};
+    
+    WHEN SETCHANGED(OrderLine l IS OrderLine) AND order(l) = Order o 
+                        AND NOT status(o) = OrderStatus.draft AND NOT disableHistory() DO {     
+        NEW h = OrderHistory {
+            order(h) <- o;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            computer(h) <- currentComputer();
+            type(h) <- 'Добавлена строка';
+            description (h) <- 'Добавлена строка с индексом ' + index(l);
+        }
+    }
+    
+    WHEN DROPPED(OrderLine l IS OrderLine) AND PREV(order(l)) = Order o 
+                        AND NOT status(o) = OrderStatus.draft AND NOT disableHistory() DO {     
+        NEW h = OrderHistory {
+            order(h) <- o;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            computer(h) <- currentComputer();
+            type(h) <- 'Удалена строка';
+            description (h) <- 'Удалена строка с индексом ' + PREV(index(l));
+        }
+    }
+    
+    WHEN CHANGED(quantity(OrderLine l)) AND order(l) = Order o 
+                        AND NOT status(o) = OrderStatus.draft AND NOT disableHistory() DO {     
+        NEW h = OrderHistory {
+            order(h) <- o;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            type(h) <- 'Изменено исходное кол-во';
+            description (h) <- 'Изменено исходное кол-во продукта ' + nameItem(l) + ' на ' + quantity(l);
+        }
+    }
+    
+    WHEN CHANGED(item(OrderLine l)) AND order(l) = Order o 
+                        AND NOT status(o) = OrderStatus.draft AND NOT disableHistory() DO {     
+        NEW h = OrderHistory {
+            order(h) <- o;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            computer(h) <- currentComputer();
+            type(h) <- 'Изменен продукт';
+            description (h) <- 'Изменен продукт в строке ' + index(l) + ' на ' + nameItem(l);
+        }
+    }
+};
 
 background = ABSTRACT CASE COLOR (Order);
 FORM orders 'Заказы поставщикам'
@@ -220,12 +402,110 @@ FORM orders 'Заказы поставщикам'
     PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE 
 ;
 
-@extendFormEditable(orders);
+@extendFormEditable(orders){
+    EXTEND FORM orders
+        PROPERTIES() isEditable
+    ;
+    DESIGN orders {
+        TOOLBARBOX {
+            MOVE PROPERTY(isEditable()) BEFORE TOOLBARRIGHT;
+        }
+    }
+};
 
-@defineDocObjectsForm(orders, o, 'Заказы поставщикам');
-@defineDocStatusForm(order, o);
-@defineDocLinesCount(order, o);
-@defineDocLocationAccess(order, o);
+@defineDocObjectsForm(orders, o, 'Заказы поставщикам'){
+    DESIGN orders {
+        OBJECTS {
+            NEW pane {
+                fill = 1;
+                type = CONTAINERH;
+                NEW tabbedPane {
+                    type = TABBED;
+                    fill = 1;
+                    MOVE BOX(o) { caption = 'Заказы поставщикам'; }
+                }
+                NEW rightPane {
+                    NEW filters {
+                        caption = 'Фильтры';
+                        alignment = STRETCH;
+                        MOVE FILTERGROUPS(o) {
+                            type = CONTAINERV;
+                            alignment = STRETCH;
+                        }
+                    }
+                    NEW actions {
+                        alignment = STRETCH;
+                        caption = 'Действия';
+                    }
+                    NEW statuses {
+                        alignment = STRETCH;
+                        caption = 'Статусы';
+                    }
+                }
+            }
+        }
+    }
+};
+@defineDocStatusForm(order, o){
+    EXTEND FORM orders
+        PROPERTIES(o) READONLY nameStatus BACKGROUND colorStatus(o) FIRST
+        FILTERGROUP status
+            FILTER 'Черновик' status(o) = OrderStatus.draft
+    ;
+    
+    DESIGN orders {
+        FILTERGROUP(status) { alignment = STRETCH; }
+    }
+    
+    EXTEND FORM order
+        PROPERTIES(o) nameStatus BACKGROUND colorStatus(o)
+    ;
+    
+    DESIGN order {
+        NEW statusPane FIRST {
+            caption = 'Статусы';
+            type = CONTAINERH;
+            alignment = STRETCH;                          
+            NEW statusActions {
+                type = CONTAINERH;                    
+                flex = 1; 
+                NEW primaryActions {
+                    type = CONTAINERH;
+                }
+                NEW secondaryActions {
+                    type = CONTAINERH;
+                }           
+            }
+            NEW status {
+                type = CONTAINERH;
+                MOVE PROPERTY(nameStatus(o));
+            }
+        }    
+    } 
+};
+@defineDocLinesCount(order, o){ 
+    countOrderLine 'Кол-во строк' (Order o) = GROUP SUM 1 IF order(OrderLine l) = o MATERIALIZED;
+    
+    DESIGN order {
+        lines {
+            caption = (CONCAT ' ', 'Строки', '(' + countOrderLine(o) + ')');
+        }
+    }
+    EXTEND FORM orders PROPERTIES(o) READONLY countOrderLine;
+};
+@defineDocLocationAccess(order, o){
+    @defineDocLocationAccess(order, o, ){
+    WHEN LOCAL SET(Order o IS Order) AND NOT CHANGED(location(o)) AND countLocation() = 1 DO
+        location(o) <- firstLocation();
+
+    CONSTRAINT SETCHANGED(location(Order o)) AND accessDenied(location(o)) CHECKED BY location[Order]
+               MESSAGE 'У текущего пользователя нет прав доступа к выбранному месту хранения';
+               
+    EXTEND FORM orders
+        FILTERS accessGranted(location(o)) OR NOT location(o) 
+    ; 
+};
+};
 
 NAVIGATOR {
     operations {

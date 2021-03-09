@@ -6,33 +6,39 @@ NAMESPACE Retail;
 
 CLASS Coming 'Приход в розницу' : Order;
 @defineDocStatus(coming, 'прихода в розницу');
-
 @defineNumberType(coming);
-
 @defineID(coming, 'Приход в розницу', '', 6);
 
 // Lines
 CLASS ComingLine 'Строка заказа' : OrderLine;
+coming =  DATA Coming (ComingLine) NONULL  DELETE;
 
+taxPrice 'Цена с НДС' = DATA NUMERIC[10,2] (ComingLine);
 markup 'Наценка, %' = DATA NUMERIC[10,2] (ComingLine);
 retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
 
-sumTaxes 'Сумма налога' = DATA NUMERIC[10,2] (ComingLine);
+sumConteinTax 'Сумма с НДС' = DATA NUMERIC[10,2] (ComingLine);
+sumMarkup 'Сумма наценки' = DATA NUMERIC[10,2] (ComingLine);
+sumRetailPrice 'Розничная сумма' = DATA NUMERIC[10,2] (ComingLine);
 
-retailPriceSum 'Розничная сумма' = DATA NUMERIC[10,2] (ComingLine);
-
-markupSum 'Сумма наценки' = DATA NUMERIC[10,2] (ComingLine);
-
-WHEN LOCAL FORMS order SETCHANGED(item(ComingLine cl)) DO markup(cl) <- markup(item(cl));
-
-WHEN LOCAL (CHANGED(untaxedAmount(ComingLine cl)) OR CHANGED(markup(cl))) 
-    AND NOT CHANGED(markupSum(cl)) DO markupSum(d) <- NUMERIC[10,2](markup(cl) * untaxedAmount(cl));
-
-WHEN LOCAL (CHANGED(untaxedAmount(ComingLine cl)) OR CHANGED(taxes(cl))) 
-    AND NOT CHANGED(sumTaxes(cl)) DO sumTaxes(d) <- NUMERIC[10,2](taxes(cl) * untaxedAmount(cl));
-
-WHEN LOCAL (CHANGED(untaxedAmount(ComingLine cl)) OR CHANGED(taxes(cl))) 
-    AND NOT CHANGED(sumTaxes(cl)) DO sumTaxes(d) <- NUMERIC[10,2](taxes(cl) * untaxedAmount(cl));
+WHEN LOCAL FORMS order SETCHANGED(item(ComingLine cl)) DO {
+    markup(cl) <- markup(item(cl));
+}
+//Цена с НДС
+WHEN LOCAL (CHANGED(taxes(ComingLine cl)) OR CHANGED(price(cl))) 
+    AND NOT CHANGED(taxPrice(cl)) DO taxPrice(d) <- NUMERIC[10,2](price(cl) + price(cl) * taxPercent(cl)/100);
+//Розничная цена
+WHEN LOCAL (CHANGED(markup(ComingLine cl)) OR CHANGED(taxPrice(cl))) 
+    AND NOT CHANGED(retailPrice(cl)) DO retailPrice(d) <- NUMERIC[10,2](taxPrice(cl) + taxPrice(cl) * markup(cl)/100);
+//Сумма с НДС
+WHEN LOCAL (CHANGED(taxAmount(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
+    AND NOT CHANGED(sumConteinTax(cl)) DO sumConteinTax(d) <- NUMERIC[10,2](taxPrice(cl) * quantity(cl));
+//Сумма наценки
+WHEN LOCAL (CHANGED(markup(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
+    AND NOT CHANGED(sumMarkup(cl)) DO sumMarkup(d) <- NUMERIC[10,2](taxPrice(cl) * markup(cl)/100 * quantity(cl));
+//Розничная сумма
+WHEN LOCAL (CHANGED(sumMarkup(ComingLine cl)) OR CHANGED(sumConteinTax(cl))) 
+    AND NOT CHANGED(sumRetailPrice(cl)) DO sumRetailPrice(d) <- NUMERIC[10,2](retailPrice(cl) * quantity(cl));
 
 FORM coming 'Приход в розницу'
     OBJECTS c = Coming PANEL
@@ -41,9 +47,10 @@ FORM coming 'Приход в розницу'
     PROPERTIES(c) READONLY untaxedAmount, taxAmount, amount
                  
     OBJECTS lineObject = ComingLine
-    PROPERTIES(lineObject) index, nameItem, description, nameUom, idBarCodeItem, idItem, 
-        quantity, price, untaxedAmount, taxes ON CHANGE changeTax(lineObject), sumTaxes, 
-        markup, markupSum, retailPrice, retailPriceSum
+    PROPERTIES(lineObject) index, nameItem, //description, 
+        nameUom, idBarCodeItem, idItem, 
+        quantity, price, taxes ON CHANGE changeTax(lineObject), taxPrice, markup, retailPrice,
+        untaxedAmount READONLY, taxAmount, sumConteinTax, sumMarkup, sumRetailPrice
     PROPERTIES(lineObject) NEW, DELETE
     FILTERS order(lineObject) = c
      

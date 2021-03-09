@@ -1,4 +1,4 @@
-MODULE MyComponyBy;
+MODULE MyCompanyBy;
 
 REQUIRE MyCompanyRu,
         ItemBy, 

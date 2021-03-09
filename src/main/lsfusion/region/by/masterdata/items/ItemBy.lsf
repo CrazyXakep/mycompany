@@ -7,7 +7,7 @@ NAMESPACE MasterData;
 markup 'Наценка, %' = DATA NUMERIC[10,2] (Item);
 
 copy (Item n, Item o) + {
-    markup(n)   <- markup(o);
+    markup(n) <- markup(o);
 }
 
 EXTEND FORM item
