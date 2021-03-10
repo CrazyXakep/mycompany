@@ -1,26 +1,84 @@
 MODULE Coming;
 
-REQUIRE RetailSettings, PurchaseOrder, ItemBy, TaxBy;
+REQUIRE RetailSettings, PurchaseOrder, ItemBy, TaxBy, RetailBy;
 
 NAMESPACE Retail;
 
-CLASS Coming 'Приход в розницу' : Order;
+CLASS Coming 'Приход в розницу';
+
+type 'Тип' = DATA OrderType (Coming) NONULL;
+nameType 'Тип' (Coming c) = name(type(c));
+
 @defineDocStatus(coming, 'прихода в розницу');
 @defineNumberType(coming);
-@defineID(coming, 'Приход в розницу', '', 6);
+@defineID(coming, 'Приход в розницу', 'ПвР', 6);
+
+WHEN LOCAL SET(Coming c IS Coming) AND NOT CHANGED(type(c)) DO type(c) <- comingType(); 
+
+dateTime 'Дата'  = DATA DATETIME (Coming);
+WHEN LOCAL SET(Coming c IS Coming) AND NOT CHANGED(dateTime(c)) DO { dateTime(c) <- currentDateTime();}
+@defineDateTimeAggregation(Coming);
+
+numberDate 'Описание' (Coming c) = number(c) + ' от ' + dateTime(c) IN id;
+
+vendor 'Поставщик' = DATA Partner (Coming) NONULL;
+nameVendor 'Поставщик' (Coming c) = name(vendor(c));
+
+CONSTRAINT vendor(Coming c) AND NOT isVendor(vendor(c))
+    CHECKED BY vendor[Coming] MESSAGE 'Контрагент заказа поставщику должен быть поставщиком';
+// company
+company 'Компания' = DATA Company (Coming) NONULL;
+nameCompany 'Компания' (Coming c) = name(company(c));
+WHEN LOCAL SET(Coming c IS Coming) AND NOT CHANGED(company(c)) DO company(c) <- defaultCompany();
+
+// location
+location = DATA Location (Coming);
+nameLocation 'Место хранения' (Coming c) = name(location(c));
+
+// currency
+currency = DATA Currency (Coming);
+nameCurrency 'Валюта' (Coming c) = name(currency(c));
+
+WHEN LOCAL SETCHANGED(type(Coming c)) AND currency(type(c)) AND NOT CHANGED(currency(c)) DO currency(c) <- currency(type(c));  
+
 
 // Lines
-CLASS ComingLine 'Строка заказа' : OrderLine;
-coming = DATA Coming (ComingLine) NONULL  DELETE;
+CLASS ComingLine 'Строка заказа';
+coming = DATA Coming (ComingLine) NONULL DELETE;
+
+index '№' = PARTITION SUM 1 ORDER ComingLine cl BY coming(cl) IN id MATERIALIZED CHARWIDTH 3;
+
+item = DATA Item (ComingLine) NONULL;
+nameItem '{Item}' (ComingLine cl) = name(item(cl));
+idBarCodeItem 'Штрихкод' (ComingLine cl) = idBarCode(item(cl));
+idItem 'Код' (ComingLine cl) = id(item(cl));
+
+CONSTRAINT item(ComingLine cl) AND NOT canBePurchased(item(cl)) 
+    CHECKED BY item[ComingLine] MESSAGE 'Номенклатура не предназначена для закупки';
+
+uom (ComingLine cl) = uom(item(cl));
+nameUom 'Ед. изм.' (ComingLine cl) = name(uom(cl));
+
+quantity '{Quantity}' = DATA NUMERIC[16,3] (ComingLine);
+
+price 'Первая Цена' = DATA NUMERIC[10,2] (ComingLine);
+
+defaultPrice = ABSTRACT CASE NUMERIC[10,2] (ComingLine);
+WHEN LOCAL SETCHANGED(item(ComingLine cl)) AND NOT CHANGED(price(cl)) DO price(cl) <- defaultPrice(cl);
+
+defaultPrice (ComingLine cl) += WHEN cost(item(cl), DATE(dateTime(coming(cl)))) THEN cost(item(cl)); 
+
+firstSum 'Первая Сумма' (ComingLine cl) = NUMERIC[10,2](price(cl) * quantity(cl));
+
 taxIn 'НДС входящий' = DATA Tax (ComingLine);
 changeTaxIn (ComingLine cl) {
     DIALOG changeTaxBy OBJECTS t INPUT DO taxIn(cl) <- t;
 }  
-taxInTitle 'НДС входящий, %' (ComingLine l) = ISTRING[10](name(taxIn(l)));
+taxInTitle 'НДС входящий, %' (ComingLine cl) = ISTRING[10](name(taxIn(cl)));
 taxInValue 'НДС входящий' (ComingLine cl) = NUMERIC[10,2] (price(cl) * value(taxIn(cl))/100);
 sumTaxIn 'Сумма НДС входяшего' = DATA NUMERIC[10,2] (ComingLine); 
 taxInPrice 'Цена с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (price(cl) + taxInValue(cl));
-sumConteinTaxIn 'Сумма с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (untaxedAmount(cl) + sumTaxIn(cl));
+sumConteinTaxIn 'Сумма с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (firstSum(cl) + sumTaxIn(cl));
 
 markup 'Наценка, %' = DATA NUMERIC[10,2] (ComingLine);
 markupValue 'Наценка' (ComingLine cl) = NUMERIC[10,2](price(cl) * markup(cl) / 100);
@@ -38,13 +96,13 @@ sumTax 'Сумма НДС розницы' (ComingLine cl) = NUMERIC[10,2] (taxVa
 retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
 sumRetailPrice 'Розничная сумма' (ComingLine cl) = NUMERIC[10,2] (retailPrice(cl) * quantity(cl));
 
-firstSumDoc 'Первая сумма' (Coming c) = GROUP SUM untaxedAmount(ComingLine cl) IF order(cl) = c;
-sumTaxInDoc 'Сумма НДС входяшего' (Coming c) = GROUP SUM sumTaxIn(ComingLine cl) IF order(cl) = c;
-sumMarkupDoc 'Сумма наценки' (Coming c) = GROUP SUM sumMarkup(ComingLine cl) IF order(cl) = c;
-sumRetailDoc 'Розничная сумма' (Coming c) = GROUP SUM sumRetailPrice(ComingLine cl) IF order(cl) = c;
+firstSumDoc 'Первая сумма' (Coming c) = GROUP SUM firstSum(ComingLine cl) IF coming(cl) = c;
+sumTaxInDoc 'Сумма НДС входяшего' (Coming c) = GROUP SUM sumTaxIn(ComingLine cl) IF coming(cl) = c;
+sumMarkupDoc 'Сумма наценки' (Coming c) = GROUP SUM sumMarkup(ComingLine cl) IF coming(cl) = c;
+sumRetailDoc 'Розничная сумма' (Coming c) = GROUP SUM sumRetailPrice(ComingLine cl) IF coming(cl) = c;
 
 //Сумма НДС входяшего
-WHEN LOCAL (CHANGED(taxIn(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
+WHEN LOCAL (CHANGED(taxIn(ComingLine cl)) OR CHANGED(firstSum(cl))) 
     AND NOT CHANGED(sumTaxIn(cl)) DO sumTaxIn(cl) <- NUMERIC[10,2](taxInValue(cl) * quantity(cl));
 //Розничная цена
 WHEN LOCAL (CHANGED(taxValue(ComingLine cl)) OR CHANGED(price(cl))) 
@@ -57,9 +115,9 @@ FORM coming 'Приход в розницу'
     PROPERTIES(c) READONLY firstSumDoc, sumTaxInDoc, sumMarkupDoc, sumRetailDoc
                  
     OBJECTS lineObject = ComingLine
-    PROPERTIES(lineObject) index, idItem, nameItem, //description, 
+    PROPERTIES(lineObject) index, idItem, nameItem, 
         nameUom, idBarCodeItem,  
-        quantity, price, untaxedAmount READONLY, 
+        quantity, price, firstSum READONLY, 
         taxInTitle ON CHANGE changeTaxIn(lineObject), taxInValue, sumTaxIn, taxInPrice, sumConteinTaxIn,
         markup, markupValue, sumMarkup, markupPrice,
         taxTitle ON CHANGE changeTax(lineObject), taxValue, sumTax, retailPrice, sumRetailPrice
@@ -121,15 +179,12 @@ DESIGN coming {
     }        
 }
 
-
+background = ABSTRACT CASE COLOR (Coming);
 FORM comings 'Приходы в розницу'
     OBJECTS c = Coming BACKGROUND background(c)
     PROPERTIES(c) READONLYIF isReadonly()
                            nameType, dateTime, number, nameVendor,
-                           namePaymentTerms,
-                           scheduledDateTime, nameLocation,
-                           nameRepresentative, vendorReference,
-                           untaxedAmount, taxAmount, amount     
+                           nameLocation, firstSumDoc, sumTaxInDoc, sumMarkupDoc, sumRetailDoc
     PROPERTIES(c) NEWSESSION NEW, EDIT, DELETE 
 ;
 @extendFormEditable(comings);

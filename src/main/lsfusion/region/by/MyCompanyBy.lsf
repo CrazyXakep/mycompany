@@ -1,6 +1,6 @@
 MODULE MyCompanyBy;
 
 REQUIRE MyCompanyRu,
-        ItemBy, 
+        ItemBy, RetailBy, 
         Coming, ComingFilter,
         TaxBy;

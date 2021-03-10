@@ -1,0 +1,18 @@
+MODULE RetailBy;
+
+REQUIRE RetailSettings, PurchaseOrderType;
+
+NAMESPACE Retail;
+
+comingType = DATA OrderType();
+nameComingType 'Тип приход в розницу' = name(comingType());
+    
+EXTEND FORM options 
+    PROPERTIES nameComingType()
+;
+    
+DESIGN options {
+    commons {
+        MOVE PROPERTY(nameComingType());
+    }
+}
