@@ -31,9 +31,9 @@ tax 'НДС' = DATA Tax (ComingLine);
 changeTax (ComingLine cl) {
     DIALOG changeTaxBy OBJECTS t INPUT DO tax(cl) <- t;
 } 
-taxTitle 'НДС, %' (ComingLine l) = ISTRING[10](name(tax(l)));
-taxValue 'НДС' (ComingLine cl) = NUMERIC[10,2] (markupPrice(cl) * value(tax(cl)) / 100);  
-sumTax 'Сумма НДС' (ComingLine cl) = NUMERIC[10,2] (taxValue(cl) * quantity(cl));
+taxTitle 'НДС розница, %' (ComingLine l) = ISTRING[10](name(tax(l)));
+taxValue 'НДС розница' (ComingLine cl) = NUMERIC[10,2] (markupPrice(cl) * value(tax(cl)) / 100);  
+sumTax 'Сумма НДС розницы' (ComingLine cl) = NUMERIC[10,2] (taxValue(cl) * quantity(cl));
 
 retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
 sumRetailPrice 'Розничная сумма' (ComingLine cl) = NUMERIC[10,2] (retailPrice(cl) * quantity(cl));
