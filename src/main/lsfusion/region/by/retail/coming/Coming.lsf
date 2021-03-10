@@ -12,34 +12,36 @@ CLASS Coming 'Приход в розницу' : Order;
 // Lines
 CLASS ComingLine 'Строка заказа' : OrderLine;
 coming = DATA Coming (ComingLine) NONULL  DELETE;
-
 taxIn 'НДС входящий' = DATA Tax (ComingLine);
+changeTaxIn (ComingLine cl) {
+    DIALOG changeTaxBy OBJECTS t INPUT DO taxIn(cl) <- t;
+}  
 taxInTitle 'НДС входящий, %' (ComingLine l) = ISTRING[10](name(taxIn(l)));
 taxInValue 'НДС входящий' (ComingLine cl) = NUMERIC[10,2] (price(cl) * value(taxIn(cl))/100);
 sumTaxIn 'Сумма НДС входяшего' = DATA NUMERIC[10,2] (ComingLine); 
 taxInPrice 'Цена с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (price(cl) + taxInValue(cl));
 sumConteinTaxIn 'Сумма с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (untaxedAmount(cl) + sumTaxIn(cl));
-   
-changeTaxIn (OrderLine l) {
-    DIALOG changeTaxBy OBJECTS t INPUT DO taxIn(l) <- t;
-}   
-changeTax (OrderLine l) {
-    DIALOG changeTaxBy OBJECTS t INPUT DO {
-        in(l, t) <- TRUE;
-        FOR taxGroup(t) = taxGroup(Tax tx) AND NOT t = tx DO in(l, tx) <- NULL;
-    } 
-}
 
 markup 'Наценка, %' = DATA NUMERIC[10,2] (ComingLine);
 markupValue 'Наценка' (ComingLine cl) = NUMERIC[10,2](price(cl) * markup(cl) / 100);
 sumMarkup 'Сумма наценки' (ComingLine cl) = NUMERIC[10,2] (markupValue(cl) * quantity(cl));
 markupPrice 'Цена с наценкой' (ComingLine cl) = NUMERIC[10,2](price(cl) + markupValue(cl));
-   
-taxValue 'НДС' (ComingLine cl) = NUMERIC[10,2] (markupPrice(cl) * taxPercent(cl) / 100);  
+
+tax 'НДС' = DATA Tax (ComingLine);  
+changeTax (ComingLine cl) {
+    DIALOG changeTaxBy OBJECTS t INPUT DO tax(cl) <- t;
+} 
+taxTitle 'НДС, %' (ComingLine l) = ISTRING[10](name(tax(l)));
+taxValue 'НДС' (ComingLine cl) = NUMERIC[10,2] (markupPrice(cl) * value(tax(cl)) / 100);  
 sumTax 'Сумма НДС' (ComingLine cl) = NUMERIC[10,2] (taxValue(cl) * quantity(cl));
 
 retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
 sumRetailPrice 'Розничная сумма' (ComingLine cl) = NUMERIC[10,2] (retailPrice(cl) * quantity(cl));
+
+firstSumDoc 'Первая сумма' (Coming c) = GROUP SUM untaxedAmount(ComingLine cl) IF order(cl) = c;
+sumTaxInDoc 'Сумма НДС входяшего' (Coming c) = GROUP SUM sumTaxIn(ComingLine cl) IF order(cl) = c;
+sumMarkupDoc 'Сумма наценки' (Coming c) = GROUP SUM sumMarkup(ComingLine cl) IF order(cl) = c;
+sumRetailDoc 'Розничная сумма' (Coming c) = GROUP SUM sumRetailPrice(ComingLine cl) IF order(cl) = c;
 
 //Сумма НДС входяшего
 WHEN LOCAL (CHANGED(taxIn(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
@@ -52,7 +54,7 @@ FORM coming 'Приход в розницу'
     OBJECTS c = Coming PANEL
     PROPERTIES(c) nameType, dateTime, number, 
                   nameVendor, nameCompany, nameLocation, nameCurrency
-    PROPERTIES(c) READONLY untaxedAmount, taxAmount, amount
+    PROPERTIES(c) READONLY firstSumDoc, sumTaxInDoc, sumMarkupDoc, sumRetailDoc
                  
     OBJECTS lineObject = ComingLine
     PROPERTIES(lineObject) index, idItem, nameItem, //description, 
@@ -60,9 +62,9 @@ FORM coming 'Приход в розницу'
         quantity, price, untaxedAmount READONLY, 
         taxInTitle ON CHANGE changeTaxIn(lineObject), taxInValue, sumTaxIn, taxInPrice, sumConteinTaxIn,
         markup, markupValue, sumMarkup, markupPrice,
-        taxes ON CHANGE changeTax(lineObject), taxValue, sumTax, taxAmount, retailPrice, sumRetailPrice
+        taxTitle ON CHANGE changeTax(lineObject), taxValue, sumTax, retailPrice, sumRetailPrice
     PROPERTIES(lineObject) NEW, DELETE
-    FILTERS order(lineObject) = c
+    FILTERS coming(lineObject) = c
      
     EDIT Coming OBJECT c    
 ; 
@@ -70,6 +72,7 @@ FORM coming 'Приход в розницу'
 WHEN LOCAL FORMS coming SETCHANGED(item(ComingLine cl)) DO {
     markup(cl) <- markup(item(cl));
     taxIn(cl) <- taxIn(item(cl));
+    tax(cl) <- tax(item(cl)); 
     price(cl) <- firstPrice(item(cl));
 }
 
@@ -109,9 +112,10 @@ DESIGN coming {
             NEW total {
                 caption = 'Итого';
                 type = CONTAINERH;
-                MOVE PROPERTY(untaxedAmount(c));
-                MOVE PROPERTY(taxAmount(c));
-                MOVE PROPERTY(amount(c));                     
+                MOVE PROPERTY(firstSumDoc(c));
+                MOVE PROPERTY(sumTaxInDoc(c));
+                MOVE PROPERTY(sumMarkupDoc(c));      
+                MOVE PROPERTY(sumRetailDoc(c));                 
             }
         }
     }        
