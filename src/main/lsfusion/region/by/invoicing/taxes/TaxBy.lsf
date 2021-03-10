@@ -1,0 +1,12 @@
+MODULE TaxBy;
+
+REQUIRE Tax;
+
+NAMESPACE Invoicing;
+
+FORM changeTaxBy 'Ставки НДС'
+    OBJECTS t = Tax
+    PROPERTIES(t) name READONLY
+    PROPERTIES(t) NEW
+    EDIT Tax OBJECT t
+;

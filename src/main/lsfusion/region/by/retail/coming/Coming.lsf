@@ -1,6 +1,6 @@
 MODULE Coming;
 
-REQUIRE RetailSettings, PurchaseOrder, ItemBy;
+REQUIRE RetailSettings, PurchaseOrder, ItemBy, TaxBy;
 
 NAMESPACE Retail;
 
@@ -11,34 +11,42 @@ CLASS Coming 'Приход в розницу' : Order;
 
 // Lines
 CLASS ComingLine 'Строка заказа' : OrderLine;
-coming =  DATA Coming (ComingLine) NONULL  DELETE;
+coming = DATA Coming (ComingLine) NONULL  DELETE;
 
-taxPrice 'Цена с НДС' = DATA NUMERIC[10,2] (ComingLine);
-markup 'Наценка, %' = DATA NUMERIC[10,2] (ComingLine);
-retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
-
-sumConteinTax 'Сумма с НДС' = DATA NUMERIC[10,2] (ComingLine);
-sumMarkup 'Сумма наценки' = DATA NUMERIC[10,2] (ComingLine);
-sumRetailPrice 'Розничная сумма' = DATA NUMERIC[10,2] (ComingLine);
-
-WHEN LOCAL FORMS order SETCHANGED(item(ComingLine cl)) DO {
-    markup(cl) <- markup(item(cl));
+taxIn 'НДС входящий' = DATA Tax (ComingLine);
+taxInTitle 'НДС входящий, %' (ComingLine l) = ISTRING[10](name(taxIn(l)));
+taxInValue 'НДС входящий' (ComingLine cl) = NUMERIC[10,2] (price(cl) * value(taxIn(cl))/100);
+sumTaxIn 'Сумма НДС входяшего' = DATA NUMERIC[10,2] (ComingLine); 
+taxInPrice 'Цена с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (price(cl) + taxInValue(cl));
+sumConteinTaxIn 'Сумма с НДС входящим' (ComingLine cl) = NUMERIC[10,2] (untaxedAmount(cl) + sumTaxIn(cl));
+   
+changeTaxIn (OrderLine l) {
+    DIALOG changeTaxBy OBJECTS t INPUT DO taxIn(l) <- t;
+}   
+changeTax (OrderLine l) {
+    DIALOG changeTaxBy OBJECTS t INPUT DO {
+        in(l, t) <- TRUE;
+        FOR taxGroup(t) = taxGroup(Tax tx) AND NOT t = tx DO in(l, tx) <- NULL;
+    } 
 }
-//Цена с НДС
-WHEN LOCAL (CHANGED(taxes(ComingLine cl)) OR CHANGED(price(cl))) 
-    AND NOT CHANGED(taxPrice(cl)) DO taxPrice(d) <- NUMERIC[10,2](price(cl) + price(cl) * taxPercent(cl)/100);
+
+markup 'Наценка, %' = DATA NUMERIC[10,2] (ComingLine);
+markupValue 'Наценка' (ComingLine cl) = NUMERIC[10,2](price(cl) * markup(cl) / 100);
+sumMarkup 'Сумма наценки' (ComingLine cl) = NUMERIC[10,2] (markupValue(cl) * quantity(cl));
+markupPrice 'Цена с наценкой' (ComingLine cl) = NUMERIC[10,2](price(cl) + markupValue(cl));
+   
+taxValue 'НДС' (ComingLine cl) = NUMERIC[10,2] (markupPrice(cl) * taxPercent(cl) / 100);  
+sumTax 'Сумма НДС' (ComingLine cl) = NUMERIC[10,2] (taxValue(cl) * quantity(cl));
+
+retailPrice 'Розничная цена' = DATA NUMERIC[10,2] (ComingLine);
+sumRetailPrice 'Розничная сумма' (ComingLine cl) = NUMERIC[10,2] (retailPrice(cl) * quantity(cl));
+
+//Сумма НДС входяшего
+WHEN LOCAL (CHANGED(taxIn(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
+    AND NOT CHANGED(sumTaxIn(cl)) DO sumTaxIn(cl) <- NUMERIC[10,2](taxInValue(cl) * quantity(cl));
 //Розничная цена
-WHEN LOCAL (CHANGED(markup(ComingLine cl)) OR CHANGED(taxPrice(cl))) 
-    AND NOT CHANGED(retailPrice(cl)) DO retailPrice(d) <- NUMERIC[10,2](taxPrice(cl) + taxPrice(cl) * markup(cl)/100);
-//Сумма с НДС
-WHEN LOCAL (CHANGED(taxAmount(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
-    AND NOT CHANGED(sumConteinTax(cl)) DO sumConteinTax(d) <- NUMERIC[10,2](taxPrice(cl) * quantity(cl));
-//Сумма наценки
-WHEN LOCAL (CHANGED(markup(ComingLine cl)) OR CHANGED(untaxedAmount(cl))) 
-    AND NOT CHANGED(sumMarkup(cl)) DO sumMarkup(d) <- NUMERIC[10,2](taxPrice(cl) * markup(cl)/100 * quantity(cl));
-//Розничная сумма
-WHEN LOCAL (CHANGED(sumMarkup(ComingLine cl)) OR CHANGED(sumConteinTax(cl))) 
-    AND NOT CHANGED(sumRetailPrice(cl)) DO sumRetailPrice(d) <- NUMERIC[10,2](retailPrice(cl) * quantity(cl));
+WHEN LOCAL (CHANGED(taxValue(ComingLine cl)) OR CHANGED(price(cl))) 
+    AND NOT CHANGED(retailPrice(cl)) DO retailPrice(cl) <- NUMERIC[10,2](taxValue(cl) + markupPrice(cl));
 
 FORM coming 'Приход в розницу'
     OBJECTS c = Coming PANEL
@@ -47,15 +55,23 @@ FORM coming 'Приход в розницу'
     PROPERTIES(c) READONLY untaxedAmount, taxAmount, amount
                  
     OBJECTS lineObject = ComingLine
-    PROPERTIES(lineObject) index, nameItem, //description, 
-        nameUom, idBarCodeItem, idItem, 
-        quantity, price, taxes ON CHANGE changeTax(lineObject), taxPrice, markup, retailPrice,
-        untaxedAmount READONLY, taxAmount, sumConteinTax, sumMarkup, sumRetailPrice
+    PROPERTIES(lineObject) index, idItem, nameItem, //description, 
+        nameUom, idBarCodeItem,  
+        quantity, price, untaxedAmount READONLY, 
+        taxInTitle ON CHANGE changeTaxIn(lineObject), taxInValue, sumTaxIn, taxInPrice, sumConteinTaxIn,
+        markup, markupValue, sumMarkup, markupPrice,
+        taxes ON CHANGE changeTax(lineObject), taxValue, sumTax, taxAmount, retailPrice, sumRetailPrice
     PROPERTIES(lineObject) NEW, DELETE
     FILTERS order(lineObject) = c
      
     EDIT Coming OBJECT c    
 ; 
+
+WHEN LOCAL FORMS coming SETCHANGED(item(ComingLine cl)) DO {
+    markup(cl) <- markup(item(cl));
+    taxIn(cl) <- taxIn(item(cl));
+    price(cl) <- firstPrice(item(cl));
+}
 
 DESIGN coming {
     caption = (CONCAT ' ', 'Приход в розницу', '№' + number(c), 'от ' + dateTime(c));

@@ -1,10 +1,12 @@
 MODULE ItemBy;
 
-REQUIRE Item;
+REQUIRE Item, Tax;
 
 NAMESPACE MasterData;
 
 markup 'Наценка, %' = DATA NUMERIC[10,2] (Item);
+taxIn 'Входящий НДС' = DATA Tax (Item);
+firstPrice 'Первая цена' = DATA NUMERIC[10,2] (Item);
 
 copy (Item n, Item o) + {
     markup(n) <- markup(o);
