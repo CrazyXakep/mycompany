@@ -1,18 +1,26 @@
 MODULE RetailBy;
 
-REQUIRE RetailSettings, PurchaseOrderType;
+REQUIRE RetailSettings, PurchaseOrderType, ReceiptType;//, RevalueType;
 
 NAMESPACE Retail;
 
 comingType = DATA OrderType();
 nameComingType 'Тип приход в розницу' = name(comingType());
+
+receiptType = DATA ReceiptType();
+nameReceiptType 'Тип приемки для прихода в розницу' = name(receiptType());
+
+// Добавление типа переоценки
+//revalueType = DATA RevalueType();
+//nameRevalueType 'Тип прайс-листа для прихода в розницу' = name(revalueType());
     
 EXTEND FORM options 
-    PROPERTIES nameComingType()
+    PROPERTIES nameComingType(), nameReceiptType()
 ;
     
 DESIGN options {
     commons {
         MOVE PROPERTY(nameComingType());
+        MOVE PROPERTY(nameReceiptType());
     }
 }

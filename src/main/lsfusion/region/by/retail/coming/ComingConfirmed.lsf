@@ -1,0 +1,91 @@
+MODULE ComingConfirmed;
+
+REQUIRE Coming, ComingSelection, Receipt, ReceiptDone, ReceiptPutAway, ReceiptCost;
+
+NAMESPACE Retail;
+
+EXTEND CLASS ComingStatus {
+    confirmed 'Проведён'
+}
+
+status(Coming o) += WHEN confirmed(o) THEN ComingStatus.confirmed;
+colorStatus(Coming o) += WHEN status(o) = ComingStatus.confirmed THEN RGB(150,255,150);
+
+receipt 'Приёмка' = DATA Receipt (Coming);
+nameReceipt 'Приёмка' (Coming c) = STRING[50] (numberDate(receipt(c)));
+
+//revalue 'Переоценка' = DATA Revalue (Coming);
+//nameRevalue 'Переоценка' (Coming c) = STRING[50] (numberDate(revalue(c)));
+
+confirm 'Провести' (Coming c){
+    APPLY; 
+    IF canceled() THEN RETURN;
+    
+    IF(status(c) == ComingStatus.draft) THEN 
+        NEWSESSION {
+            NEW newRec = Receipt {
+                type(newRec) <- receiptType();
+                ready(newRec) <- TRUE;
+                vendor(newRec) <- vendor(c);
+                scheduledDateTime(newRec) <- dateTime(c);
+                location(newRec) <- location(c);
+                FOR coming(ComingLine cl) = c NEW rl = ReceiptLine DO {            
+                    receipt(rl) <- newRec;
+                    product(rl) <- item(cl);
+                    initialDemand(rl) <- quantity(cl);
+                    done(rl) <- quantity(cl);
+                    dataCost(rl) <- sumRetailPrice(cl);
+                    setLastDataForItem(cl);
+                }
+                receipt(c) <- newRec;
+            }
+            validate(receipt(c));
+            IF(putAway(type(receipt(c)))) THEN 
+                ASK 'Приступить к размещению товара?' DO 
+                    NEWSESSION SHOW receipt OBJECTS r = receipt(c) DOCKED;
+            
+            // Создание и заполенние переоценки 
+            
+            confirmed(c) <- TRUE;       
+            APPLY;
+        }
+}
+
+confirmOff 'Отменить проведение' (Coming c){
+    APPLY; 
+        IF canceled() THEN RETURN;
+    
+    IF(status(c) == ComingStatus.confirmed ) THEN     
+        NEWSESSION {
+          DELETE receipt(c);
+          confirmed(c) <- NULL;
+          APPLY;
+        }
+}
+
+EXTEND FORM coming 
+     PROPERTIES(c)  confirmDraft = confirm SHOWIF status(c) = ComingStatus.draft,
+                    confirmOff SHOWIF status(c) = ComingStatus.confirmed,
+                    nameReceipt SHOWIF status(c) = ComingStatus.confirmed READONLY
+                    //,namePricelist SHOWIF status(c) = ComingStatus.confirmed READONLY
+;
+
+DESIGN coming {
+    primaryActions {
+        MOVE PROPERTY(confirmDraft) { fontStyle = 'bold'; }
+        MOVE PROPERTY(confirmOff(c));
+    }
+    relatedDoc{
+        caption = CONCAT ' ', 'Cвязанные документы';
+        MOVE PROPERTY(nameReceipt(c));
+        //MOVE PROPERTY(namePricelist(c));
+    }
+}
+
+EXTEND FORM comings    
+    EXTEND FILTERGROUP status
+        FILTER 'Проведён' status(c) = ComingStatus.confirmed    
+;
+
+@defineSelectionAction(comings, Coming, confirm, 'Провести', statuses);
+@defineSelectionAction(comings, Coming, confirmOff, 'Отменить проведение', statuses);

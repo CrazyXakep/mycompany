@@ -10,6 +10,10 @@ type 'Тип' = DATA OrderType (Coming) NONULL;
 nameType 'Тип' (Coming c) = name(type(c));
 
 @defineDocStatus(coming, 'прихода в розницу');
+
+confirmed 'Проведён' = DATA BOOLEAN (Coming);
+deleted 'Удалён' = DATA BOOLEAN (Coming);
+
 @defineNumberType(coming);
 @defineID(coming, 'Приход в розницу', 'ПвР', 6);
 
@@ -60,14 +64,7 @@ uom (ComingLine cl) = uom(item(cl));
 nameUom 'Ед. изм.' (ComingLine cl) = name(uom(cl));
 
 quantity '{Quantity}' = DATA NUMERIC[16,3] (ComingLine);
-
 price 'Первая Цена' = DATA NUMERIC[10,2] (ComingLine);
-
-defaultPrice = ABSTRACT CASE NUMERIC[10,2] (ComingLine);
-WHEN LOCAL SETCHANGED(item(ComingLine cl)) AND NOT CHANGED(price(cl)) DO price(cl) <- defaultPrice(cl);
-
-defaultPrice (ComingLine cl) += WHEN cost(item(cl), DATE(dateTime(coming(cl)))) THEN cost(item(cl)); 
-
 firstSum 'Первая Сумма' (ComingLine cl) = NUMERIC[10,2](price(cl) * quantity(cl));
 
 taxIn 'НДС входящий' = DATA Tax (ComingLine);
@@ -105,8 +102,13 @@ sumRetailDoc 'Розничная сумма' (Coming c) = GROUP SUM sumRetailPri
 WHEN LOCAL (CHANGED(taxIn(ComingLine cl)) OR CHANGED(firstSum(cl))) 
     AND NOT CHANGED(sumTaxIn(cl)) DO sumTaxIn(cl) <- NUMERIC[10,2](taxInValue(cl) * quantity(cl));
 //Розничная цена
-WHEN LOCAL (CHANGED(taxValue(ComingLine cl)) OR CHANGED(price(cl))) 
+WHEN LOCAL CHANGED(taxValue(ComingLine cl)) 
     AND NOT CHANGED(retailPrice(cl)) DO retailPrice(cl) <- NUMERIC[10,2](taxValue(cl) + markupPrice(cl));
+//Образный расчет Розничной цены (изменение значение markup)
+WHEN LOCAL CHANGED(retailPrice(ComingLine cl)) 
+    AND NOT CHANGED(markup(cl)) DO markup(cl) <- 
+        NUMERIC[10,2] ((retailPrice(cl) / (price(cl) * (1 + value(tax(cl)) / 100)) - 1) * 100);
+
 
 FORM coming 'Приход в розницу'
     OBJECTS c = Coming PANEL
@@ -134,6 +136,13 @@ WHEN LOCAL FORMS coming SETCHANGED(item(ComingLine cl)) DO {
     price(cl) <- firstPrice(item(cl));
 }
 
+setLastDataForItem(ComingLine cl){
+    markup(item(cl)) <- markup(cl);
+    taxIn(item(cl)) <- taxIn(cl);
+    tax(item(cl)) <- tax(cl); 
+    firstPrice(item(cl)) <- price(cl);
+}
+
 DESIGN coming {
     caption = (CONCAT ' ', 'Приход в розницу', '№' + number(c), 'от ' + dateTime(c));
     OBJECTS {
@@ -152,8 +161,9 @@ DESIGN coming {
                 MOVE PROPERTY(nameCurrency(c));
             }
             NEW relatedDoc {
-                fill = 1;
-                type = TABBED;
+                childrenAlignment = END;
+                marginLeft = 10;
+                fill = 7;
             }                                            
         }
         NEW details {
@@ -179,13 +189,42 @@ DESIGN coming {
     }        
 }
 
+
+clone (Coming to, Coming from) {
+    type(to) <- type(from);
+    vendor(to) <- vendor(from);
+    company(to) <- company(from);
+    location(to) <- location(from);
+    currency(to) <- currency(from);
+    FOR coming(ComingLine cl) = from INLINE NEW ncl = ComingLine DO {
+        coming(ncl) <- to;
+        item(ncl) <- item(cl);
+        quantity(ncl) <- quantity(cl);
+        price(ncl) <- price(cl);
+        taxIn(ncl) <- taxIn(cl);
+        sumTaxIn(ncl) <- sumTaxIn(cl);
+        markup(ncl) <- markup(cl);
+        tax(ncl) <- tax(cl);
+        retailPrice(ncl) <- retailPrice(cl);
+    }
+}
+
+copy 'Копировать' (Coming from)  { 
+    NEWSESSION {
+        NEW to = Coming {
+            clone(to, from);
+            SHOW coming OBJECTS c = to DOCKED;
+        }
+    }
+} IMAGE 'add.png';
+
 background = ABSTRACT CASE COLOR (Coming);
 FORM comings 'Приходы в розницу'
     OBJECTS c = Coming BACKGROUND background(c)
     PROPERTIES(c) READONLYIF isReadonly()
                            nameType, dateTime, number, nameVendor,
                            nameLocation, firstSumDoc, sumTaxInDoc, sumMarkupDoc, sumRetailDoc
-    PROPERTIES(c) NEWSESSION NEW, EDIT, DELETE 
+    PROPERTIES(c) NEWSESSION TOOLBAR copy, NEW, EDIT
 ;
 @extendFormEditable(comings);
 @defineDocObjectsForm(comings, c, 'Приходы в розницу');
@@ -198,3 +237,11 @@ NAVIGATOR {
         NEW comings FIRST;
     }
 }
+
+//EXTEND FORM coming PROPERTIES copy(c);
+//
+//DESIGN coming {
+//    secondaryActions {
+//        MOVE PROPERTY(copy(c));
+//    }
+//}

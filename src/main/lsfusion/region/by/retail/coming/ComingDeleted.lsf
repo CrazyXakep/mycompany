@@ -1,0 +1,56 @@
+MODULE ComingDeleted;
+
+REQUIRE Coming, ComingSelection, ComingConfirmed;
+
+NAMESPACE Retail;
+
+EXTEND CLASS ComingStatus {
+    deleted 'Удалён'
+}
+
+status(Coming c) += WHEN deleted(c) THEN ComingStatus.deleted;
+colorStatus(Coming c) += WHEN status(c) = ComingStatus.deleted THEN RGB(252,149,149);
+
+deleteComing 'Удалить' (Coming c) {
+    APPLY; 
+    IF canceled() THEN RETURN;
+          
+    IF(status(c) != ComingStatus.deleted ) THEN        
+        NEWSESSION {
+            IF confirmed(c) THEN
+                confirmOff(c);
+            deleted(c) <- TRUE;
+            APPLY;
+        }    
+} IMAGE 'delete.png';
+
+restoreComing 'Восстановить' (Coming c) {
+    APPLY; 
+    IF canceled() THEN RETURN;
+           
+    IF(status(c) == ComingStatus.deleted ) THEN 
+        NEWSESSION {
+            deleted(c) <- NULL;
+            APPLY;
+        }    
+}
+
+EXTEND FORM coming
+     PROPERTIES(c) deleteComing SHOWIF NOT status(c) = ComingStatus.deleted,
+                   restoreComing SHOWIF status(c) = ComingStatus.deleted
+;
+
+DESIGN coming {
+    secondaryActions {
+        MOVE PROPERTY(deleteComing(c));
+        MOVE PROPERTY(restoreComing(c));
+    }
+}
+EXTEND FORM comings    
+    PROPERTIES(c) deleteComing TOOLBAR
+    EXTEND FILTERGROUP status
+        FILTER 'Удалён' status(c) = ComingStatus.deleted    
+;
+
+@defineSelectionAction(comings, Coming, deleteComing, 'Удалить', statuses);
+@defineSelectionAction(comings, Coming, restoreComing, 'Восстановить', statuses);

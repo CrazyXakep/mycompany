@@ -1,0 +1,89 @@
+MODULE ComingSearch;
+
+REQUIRE Coming, ResLedger, ComingDeleted;
+
+NAMESPACE Retail;
+
+META defineDocSearchTabBy (doc, it)
+    EXTEND FORM doc
+        TREE categories cat = Category PARENT parent(cat)
+        PROPERTIES READONLY name(cat)
+        ORDERS name(cat)
+        
+        OBJECTS itm = ###it
+        PROPERTIES(itm) READONLY name, nameUom, idBarCode, id
+        PROPERTIES(itm) NEWSESSION EDIT
+        ORDERS name(itm)
+        FILTERS level(category(itm), cat)
+        FILTERGROUP active
+            FILTER 'Активный' active(itm) 'F10' DEFAULT  
+    ;
+    
+    DESIGN doc {
+        details {
+            NEW search {
+                caption = 'Подбор';
+                type = SPLITH;
+                fill = 1;
+                MOVE BOX(TREE categories);
+                MOVE BOX(itm) { 
+                    fill = 2;
+                }
+            }
+        }
+    }
+END
+
+META defineDocSearchBy (doc, it, fun, capt, let)
+    last###doc##Line (###doc i, ###it p) = GROUP LAST ###doc##Line l ORDER l BY doc(l), it(l);
+
+    @defineDocSearchAction(doc, it, fun, capt);
+    @defineDocSearchTabBy(doc, it);
+    
+    EXTEND FORM doc
+        PROPERTIES(let, itm) fun ON CHANGE change###fun(let, itm)
+    ;
+    DESIGN doc {
+        PROPERTY(fun(let, itm)) { background = #EEEEFF; }
+    }        
+END
+
+META defineDocSearchBy (doc, it, fun, capt, let, check)
+    @defineDocSearchBy(doc, it, fun, capt, let);
+    
+    EXTEND FORM doc
+        FILTERS ##check(itm)
+    ;
+END
+
+@defineDocSearchBy(coming, item, quantity, 'Кол-во', c, canBePurchased);
+
+// available
+available 'Доступно' (Coming c, Product p) = prevAvailableRec(location(c), p); 
+
+EXTEND FORM coming
+    PROPERTIES(c, itm) READONLY available
+;
+
+// last
+lastOrderLine (Partner p, Location l, Item i) = GROUP LAST ComingLine cl ORDER dateTime(coming(cl)), cl WHERE NOT deleted(coming(cl)) BY vendor(coming(cl)), location(coming(cl)), item(cl);
+lastQuantityOrderLine (Partner p, Location l, Item i) = quantity(lastOrderLine(p, l, i));
+prevLastQuantityOrderLine (Partner p, Location l, Item i) = PREV(lastQuantityOrderLine(p, l, i));
+
+lastOrderLine (Partner p, Item i) = GROUP LAST ComingLine cl ORDER dateTime(coming(cl)), cl WHERE NOT deleted(coming(cl)) BY vendor(coming(cl)), item(cl);
+lastQuantityOrderLine (Partner p, Item i) = quantity(lastOrderLine(p, i));
+prevLastQuantityOrderLine (Partner p, Item i) = PREV(lastQuantityOrderLine(p, i));
+
+prevLastQuantityLocation 'Предыдущий заказ' (Coming c, Item i) = prevLastQuantityOrderLine(vendor(c), location(c), i); 
+prevLastQuantity 'Предыдущий заказ' (Coming c, Item i) = prevLastQuantityOrderLine(vendor(c), i); 
+
+EXTEND FORM coming
+    PROPERTIES 'Предыдущий заказ' = prevLastQuantity(c, itm) 
+
+    FILTERGROUP line
+        FILTER 'Был заказ на МХ' prevLastQuantityLocation(c, itm)
+        FILTER 'Был заказ' prevLastQuantity(c, itm)
+;
+
+// barcode
+@defineBarCodeSearch(coming, c, lineObject, quantity);

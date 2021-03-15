@@ -1,0 +1,3 @@
+MODULE ComingBy;
+
+REQUIRE Coming, ComingConfirmed, ComingDeleted, ComingFilter, ComingSelection, ComingSearch;

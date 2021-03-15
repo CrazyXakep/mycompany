@@ -1,0 +1,11 @@
+MODULE ComingSelection;
+
+REQUIRE Coming;
+
+NAMESPACE Retail;
+
+@defineSelection(Coming);
+
+@defineSelectionForm(comings, Coming, c);
+
+@defineSelectionCopyDateTime(comings, Coming, dateTime, 'прихода в розницу' );
