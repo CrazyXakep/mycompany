@@ -17,18 +17,12 @@ nameReceipt 'Приёмка' (Coming c) = STRING[50] (numberDate(receipt(c)));
 //revalue 'Переоценка' = DATA Revalue (Coming);
 //nameRevalue 'Переоценка' (Coming c) = STRING[50] (numberDate(revalue(c)));
 
-confirm 'Провести' (Coming c){
-    APPLY; 
-    IF canceled() THEN RETURN;
-    
-    IF(status(c) == ComingStatus.draft) THEN 
-        NEWSESSION {
+confirmCore 'Провести' (Coming c){
             NEW newRec = Receipt {
                 type(newRec) <- receiptType();
-                ready(newRec) <- TRUE;
                 vendor(newRec) <- vendor(c);
-                scheduledDateTime(newRec) <- dateTime(c);
                 location(newRec) <- location(c);
+                scheduledDateTime(newRec) <- dateTime(c);
                 FOR coming(ComingLine cl) = c NEW rl = ReceiptLine DO {            
                     receipt(rl) <- newRec;
                     product(rl) <- item(cl);
@@ -37,16 +31,27 @@ confirm 'Провести' (Coming c){
                     dataCost(rl) <- sumRetailPrice(cl);
                     setLastDataForItem(cl);
                 }
+                ready(newRec) <- TRUE;
                 receipt(c) <- newRec;
             }
             validate(receipt(c));
+            executionDateTime(receipt(c)) <- dateTime(c);
             IF(putAway(type(receipt(c)))) THEN 
                 ASK 'Приступить к размещению товара?' DO 
                     NEWSESSION SHOW receipt OBJECTS r = receipt(c) DOCKED;
             
             // Создание и заполенние переоценки 
             
-            confirmed(c) <- TRUE;       
+            confirmed(c) <- TRUE;  
+}
+
+confirm 'Провести' (Coming c){
+    APPLY; 
+    IF canceled() THEN RETURN;
+    
+    IF(status(c) == ComingStatus.draft) THEN 
+        NEWSESSION {
+            confirmCore(c);      
             APPLY;
         }
 }
@@ -62,6 +67,12 @@ confirmOff 'Отменить проведение' (Coming c){
           APPLY;
         }
 }
+WHEN CHANGED(quantity(ComingLine l)) AND coming(l) = Coming c AND status(c) = ComingStatus.confirmed DO {     
+       DELETE receipt(c);
+       confirmed(c) <- NULL;
+       confirmCore(c);
+}
+
 
 EXTEND FORM coming 
      PROPERTIES(c)  confirmDraft = confirm SHOWIF status(c) = ComingStatus.draft,
@@ -78,7 +89,6 @@ DESIGN coming {
     relatedDoc{
         caption = CONCAT ' ', 'Cвязанные документы';
         MOVE PROPERTY(nameReceipt(c));
-        //MOVE PROPERTY(namePricelist(c));
     }
 }
 
@@ -89,3 +99,9 @@ EXTEND FORM comings
 
 @defineSelectionAction(comings, Coming, confirm, 'Провести', statuses);
 @defineSelectionAction(comings, Coming, confirmOff, 'Отменить проведение', statuses);
+
+delete 'Удалить из базы' (Coming c){
+    DELETE c;
+    APPLY;
+}
+@defineSelectionAction(comings, Coming, delete, 'Уничтожить', actions);

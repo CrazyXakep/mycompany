@@ -9,19 +9,89 @@ CLASS Coming 'Приход в розницу';
 type 'Тип' = DATA OrderType (Coming) NONULL;
 nameType 'Тип' (Coming c) = name(type(c));
 
-@defineDocStatus(coming, 'прихода в розницу');
+@defineDocStatus(coming, 'прихода в розницу'){
+    CLASS ComingStatus 'Статус прихода в розницу' {
+        draft 'Черновик'
+    }
+    
+    name 'Имя' (ComingStatus s) = staticCaption(s) IF s IS ComingStatus CHARWIDTH 12;
+    
+    status 'Статус' = ABSTRACT CASE ComingStatus (Coming) MATERIALIZED INDEXED;
+    nameStatus 'Статус' (Coming d) = name(status(d));
+    colorStatus 'Цвет' = ABSTRACT CASE COLOR (Coming);
+    
+    status(Coming d) += WHEN d IS Coming THEN ComingStatus.draft;
+    colorStatus(Coming d) += WHEN status(d) = ComingStatus.draft THEN RGB(187,242,210);
+    
+    readonly = ABSTRACT CASE BOOLEAN (Coming);
+};
 
 confirmed 'Проведён' = DATA BOOLEAN (Coming);
 deleted 'Удалён' = DATA BOOLEAN (Coming);
 
-@defineNumberType(coming);
-@defineID(coming, 'Приход в розницу', 'ПвР', 6);
+@defineNumberType(coming){
+    number 'Номер' = DATA STRING[31] (Coming) NONULL CHARWIDTH 10;
+
+    WHEN SETCHANGED(type(Coming o)) AND numerator(type(o)) AND NOT number(o) DO {
+        number(o) <- CONCAT '/', series(numerator(type(o))), curStringValue(numerator(type(o)));
+        incrementValueSession(numerator(type(o)));
+    }
+};
+@defineID(coming, 'Приход в розницу', 'ПвР', 6){
+    id 'Код' = DATA STRING[50] (Coming) IN id CHARWIDTH 6 INDEXED;
+    coming (STRING[50] id) = GROUP AGGR Coming o BY id(o);
+    
+    numeratorComing = DATA Numerator();
+    nameNumeratorComing 'Нумератор - Приход в розницу' = name(numeratorComing());
+    
+    loadDefaultNumerators () + {
+        NEW n = Numerator {
+            name(n) <- 'Приход в розницу';
+            series(n) <- 'ПвР';
+            minValue(n) <- 1;
+            maxValue(n) <- 999999;
+            stringLength(n) <- 6;
+            numeratorComing() <- n;
+        }
+    }
+    
+    EXTEND FORM options 
+        PROPERTIES nameNumeratorComing()
+    ;
+    
+    DESIGN options {
+        commons {
+            MOVE PROPERTY(nameNumeratorComing());
+        }
+    }
+    
+    WHEN SETCHANGED(Coming o IS Coming AND numeratorComing() AND NOT id(o)) DO {
+        id(o) <- CONCAT '', series(numeratorComing()), curStringValue(numeratorComing());
+        incrementValueSession(numeratorComing());   
+    }
+};
 
 WHEN LOCAL SET(Coming c IS Coming) AND NOT CHANGED(type(c)) DO type(c) <- comingType(); 
 
 dateTime 'Дата'  = DATA DATETIME (Coming);
 WHEN LOCAL SET(Coming c IS Coming) AND NOT CHANGED(dateTime(c)) DO { dateTime(c) <- currentDateTime();}
-@defineDateTimeAggregation(Coming);
+@defineDateTimeAggregation(Coming){
+    @defineDateTimeAggregation(Coming, , ){
+    date 'Дата' (Coming o) = DATE(dateTime(o));
+    
+    @defineDateAggregation(Coming, , ){
+    nameDOW 'День недели' (Coming o) = extractDOWName(date(o));
+    week 'Неделя' (Coming o) = extractWeek(date(o));
+    
+    numberMonth '№ месяца' (Coming o) = extractMonthNumber(date(o));
+    nameMonth 'Месяц' (Coming o) = extractMonthName(date(o));
+    year 'Год' (Coming o) = extractYear(date(o));
+};
+
+    minute 'Минута' (Coming o) = extractMinute(dateTime(o));
+    hour 'Час' (Coming o) = extractHour(dateTime(o));
+};
+};
 
 numberDate 'Описание' (Coming c) = number(c) + ' от ' + dateTime(c) IN id;
 
@@ -209,6 +279,105 @@ clone (Coming to, Coming from) {
     }
 }
 
+@defineDocHistory(coming, c, item, quantity){
+
+    @defineDocHistoryHead(coming, c){
+    CLASS ComingHistory 'История изменений';
+    
+    coming = DATA Coming (ComingHistory);
+
+    dateTime 'Дата' = DATA DATETIME (ComingHistory);
+    
+    user = DATA User (ComingHistory);
+    nameUser 'Пользователь' (ComingHistory l) = name(user(l));
+    
+    computer = DATA Computer (ComingHistory);
+    hostnameComputer 'Компьютер' (ComingHistory l) = hostname(computer(l)) CHARWIDTH 10;
+    
+    type 'Тип' = DATA ISTRING[100] (ComingHistory) CHARWIDTH 15;
+    description 'Описание' = DATA TEXT (ComingHistory);
+     
+    WHEN SETCHANGED(status(Coming c)) AND NOT disableHistory() DO {     
+        NEW l = ComingHistory {
+            coming(l) <- c;
+            dateTime(l) <- currentDateTime();
+            user(l) <- currentUser();
+            computer(l) <- currentComputer();
+            type(l) <- 'Изменен статус';
+            description (l) <- 'Изменен статус на ' + staticCaption(status(c));
+        }
+    }
+
+    EXTEND FORM coming
+        OBJECTS comingl = ComingHistory
+        PROPERTIES(comingl) READONLY dateTime, nameUser, hostnameComputer, type, description, pdescription = description PANEL
+        FILTERS coming(comingl) = c
+    ;
+    
+    DESIGN coming {
+        details {
+            NEW history {
+                caption = 'История';
+                fill = 1;
+                type = SPLITH;
+                MOVE BOX(comingl) { 
+                    fill = 2;
+                    PROPERTY(description(comingl)) { valueHeight = 18; }
+                }
+                MOVE PROPERTY(pdescription) { panelCaptionVertical = TRUE; fill = 1; }
+            }
+        }
+    }
+};
+    
+    WHEN SETCHANGED(ComingLine l IS ComingLine) AND coming(l) = Coming c 
+                        AND NOT status(c) = ComingStatus.draft AND NOT disableHistory() DO {     
+        NEW h = ComingHistory {
+            coming(h) <- c;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            computer(h) <- currentComputer();
+            type(h) <- 'Добавлена строка';
+            description (h) <- 'Добавлена строка с индексом ' + index(l);
+        }
+    }
+    
+    WHEN DROPPED(ComingLine l IS ComingLine) AND PREV(coming(l)) = Coming c 
+                        AND NOT status(c) = ComingStatus.draft AND NOT disableHistory() DO {     
+        NEW h = ComingHistory {
+            coming(h) <- c;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            computer(h) <- currentComputer();
+            type(h) <- 'Удалена строка';
+            description (h) <- 'Удалена строка с индексом ' + PREV(index(l));
+        }
+    }
+    
+    WHEN CHANGED(quantity(ComingLine l)) AND coming(l) = Coming c 
+                        AND NOT status(c) = ComingStatus.draft AND NOT disableHistory() DO {     
+        NEW h = ComingHistory {
+            coming(h) <- c;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            type(h) <- 'Изменено исходное кол-во';
+            description (h) <- 'Изменено исходное кол-во продукта ' + nameItem(l) + ' на ' + quantity(l);
+        }
+    }
+    
+    WHEN CHANGED(item(ComingLine l)) AND coming(l) = Coming c 
+                        AND NOT status(c) = ComingStatus.draft AND NOT disableHistory() DO {     
+        NEW h = ComingHistory {
+            coming(h) <- c;
+            dateTime(h) <- currentDateTime();
+            user(h) <- currentUser();
+            computer(h) <- currentComputer();
+            type(h) <- 'Изменен продукт';
+            description (h) <- 'Изменен продукт в строке ' + index(l) + ' на ' + nameItem(l);
+        }
+    }
+};
+
 copy 'Копировать' (Coming from)  { 
     NEWSESSION {
         NEW to = Coming {
@@ -226,11 +395,109 @@ FORM comings 'Приходы в розницу'
                            nameLocation, firstSumDoc, sumTaxInDoc, sumMarkupDoc, sumRetailDoc
     PROPERTIES(c) NEWSESSION TOOLBAR copy, NEW, EDIT
 ;
-@extendFormEditable(comings);
-@defineDocObjectsForm(comings, c, 'Приходы в розницу');
-@defineDocStatusForm(coming, c);
-@defineDocLinesCount(coming, c);
-@defineDocLocationAccess(coming, c);
+@extendFormEditable(comings){
+    EXTEND FORM comings
+        PROPERTIES() isEditable
+    ;
+    DESIGN comings {
+        TOOLBARBOX {
+            MOVE PROPERTY(isEditable()) BEFORE TOOLBARRIGHT;
+        }
+    }
+};
+@defineDocObjectsForm(comings, c, 'Приходы в розницу'){
+    DESIGN comings {
+        OBJECTS {
+            NEW pane {
+                fill = 1;
+                type = CONTAINERH;
+                NEW tabbedPane {
+                    type = TABBED;
+                    fill = 1;
+                    MOVE BOX(c) { caption = 'Приходы в розницу'; }
+                }
+                NEW rightPane {
+                    NEW filters {
+                        caption = 'Фильтры';
+                        alignment = STRETCH;
+                        MOVE FILTERGROUPS(c) {
+                            type = CONTAINERV;
+                            alignment = STRETCH;
+                        }
+                    }
+                    NEW actions {
+                        alignment = STRETCH;
+                        caption = 'Действия';
+                    }
+                    NEW statuses {
+                        alignment = STRETCH;
+                        caption = 'Статусы';
+                    }
+                }
+            }
+        }
+    }
+};
+@defineDocStatusForm(coming, c){
+    EXTEND FORM comings
+        PROPERTIES(c) READONLY nameStatus BACKGROUND colorStatus(c) FIRST
+        FILTERGROUP status
+            FILTER 'Черновик' status(c) = ComingStatus.draft
+    ;
+    
+    DESIGN comings {
+        FILTERGROUP(status) { alignment = STRETCH; }
+    }
+    
+    EXTEND FORM coming
+        PROPERTIES(c) nameStatus BACKGROUND colorStatus(c)
+    ;
+    
+    DESIGN coming {
+        NEW statusPane FIRST {
+            caption = 'Статусы';
+            type = CONTAINERH;
+            alignment = STRETCH;                          
+            NEW statusActions {
+                type = CONTAINERH;                    
+                flex = 1; 
+                NEW primaryActions {
+                    type = CONTAINERH;
+                }
+                NEW secondaryActions {
+                    type = CONTAINERH;
+                }           
+            }
+            NEW status {
+                type = CONTAINERH;
+                MOVE PROPERTY(nameStatus(c));
+            }
+        }    
+    } 
+};
+@defineDocLinesCount(coming, c){ 
+    countComingLine 'Кол-во строк' (Coming c) = GROUP SUM 1 IF coming(ComingLine l) = c MATERIALIZED;
+    
+    DESIGN coming {
+        lines {
+            caption = (CONCAT ' ', 'Строки', '(' + countComingLine(c) + ')');
+        }
+    }
+    EXTEND FORM comings PROPERTIES(c) READONLY countComingLine;
+};
+@defineDocLocationAccess(coming, c){
+    @defineDocLocationAccess(coming, c, ){
+    WHEN LOCAL SET(Coming o IS Coming) AND NOT CHANGED(location(o)) AND countLocation() = 1 DO
+        location(o) <- firstLocation();
+
+    CONSTRAINT SETCHANGED(location(Coming o)) AND accessDenied(location(o)) CHECKED BY location[Coming]
+               MESSAGE 'У текущего пользователя нет прав доступа к выбранному месту хранения';
+               
+    EXTEND FORM comings
+        FILTERS accessGranted(location(c)) OR NOT location(c) 
+    ; 
+};
+};
 
 NAVIGATOR {
     operations {
